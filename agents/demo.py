@@ -24,6 +24,10 @@ def _c(text: str, code: str) -> str:
 def pretty(name: str, result: dict) -> None:
     print()
     print(_c(f"── {name.upper()} AGENT " + "─" * 40, "96"))
+    # If this was the supervisor path, show which sub-agents ran in parallel
+    if result.get("agent") == "supervisor" and result.get("sub_results"):
+        subs = [r["agent"] for r in result["sub_results"]]
+        print(_c(f"   ⟳ parallel fan-out: {', '.join(subs)}", "90"))
     print(json.dumps(result.get("result", result), indent=2, default=str, ensure_ascii=False))
 
 

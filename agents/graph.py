@@ -1,41 +1,27 @@
 """LangGraph orchestration for the Finance Tracker multi-agent system.
 
-Graph layout:
+Two graph paths compiled into one app:
 
-              +--------------+
-              |   START      |
-              +------+-------+
-                     |
-              +------v-------+
-              |   router     |   picks node from state["tab"]
-              +--+--+--+--+--+
-                 |  |  |  |
-     +-----------+  |  |  +----------+
-     |              |  |             |
-     v              v  v             v
- +---------+  +-----------+  +---------+  +---------+
- |Dashboard|  |Transaction|  |Analytics|  |Settings |
- +----+----+  +-----+-----+  +----+----+  +----+----+
-      |             |             |            |
-      +------+------+-------------+------------+
-             |
-             v
-           +----+
-           | END|
-           +----+
+  1. Single-tab path      (Transactions / Analytics / Settings clicks)
+     START -> router -> {tab node} -> END
 
-Each node reads the pre-computed stats from the corresponding agent class
-(dashboard.py / transactions.py / …) and calls GPT-4o-mini through the
-Emergent Universal LLM Key via `langchain_openai.ChatOpenAI`.
+  2. Supervisor fan-out   (Dashboard click)
+     START -> router -> supervisor -> [worker_transactions,
+                                       worker_analytics,
+                                       worker_settings]   (parallel)
+                                    -> synthesizer -> END
 
-Structured Outputs are enforced by binding the JSON schema through
-`ChatOpenAI.bind(response_format=...)` – identical to the raw SDK path.
+Each worker writes into `sub_results` (a list with an append reducer, so
+LangGraph merges the three parallel writes automatically). The synthesizer
+then reads all three specialist outputs and asks GPT-4o-mini to fold them
+into one unified "command centre" summary card for the Dashboard.
 """
 from __future__ import annotations
 
 import os
 import json
-from typing import Any, TypedDict, Literal
+from operator import add
+from typing import Any, Annotated, TypedDict, Literal
 
 from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -59,6 +45,9 @@ class AgentState(TypedDict, total=False):
     result: dict[str, Any]
     agent: str
     model: str
+    # Filled in parallel by supervisor workers. `operator.add` on lists
+    # is concatenation, which is exactly the reducer we want.
+    sub_results: Annotated[list[dict[str, Any]], add]
 
 
 # ------------------------- LLM factory -------------------------
@@ -89,7 +78,7 @@ def _llm(schema_name: str, schema: dict[str, Any], temperature: float) -> ChatOp
     return _LLM_CACHE[cache_key]
 
 
-# ------------------------- Node factory -------------------------
+# ------------------------- Agent registry -------------------------
 
 _AGENTS = {
     "dashboard":    DashboardAgent(),
@@ -99,7 +88,10 @@ _AGENTS = {
 }
 
 
-def _make_node(tab: str):
+# ------------------------- Node factories -------------------------
+
+def _single_node(tab: str):
+    """Node used when the user clicks a specialist tab directly."""
     agent = _AGENTS[tab]
 
     def node_fn(state: AgentState) -> AgentState:
@@ -122,40 +114,163 @@ def _make_node(tab: str):
     return node_fn
 
 
+def _worker_node(tab: str):
+    """Parallel worker: appends to `sub_results` for the synthesizer."""
+    agent = _AGENTS[tab]
+
+    def node_fn(state: AgentState) -> AgentState:
+        stats = agent.build_stats(state["transactions"])
+        llm = _llm(f"{agent.name}_output", agent.output_schema, agent.temperature)
+        response = llm.invoke([
+            SystemMessage(content=agent.system_prompt),
+            HumanMessage(content=(
+                "Pre-computed statistics (trust these numbers, never invent):\n\n"
+                + json.dumps(stats, indent=2, default=str)
+            )),
+        ])
+        return {
+            "sub_results": [{
+                "agent": agent.name,
+                "stats": stats,
+                "result": json.loads(response.content),
+            }],
+        }
+
+    return node_fn
+
+
+def _supervisor(state: AgentState) -> AgentState:
+    """No-op fan-out point. Its outgoing edges run in parallel."""
+    return {"sub_results": []}  # ensure the field exists
+
+
+# ------------------------- Synthesizer -------------------------
+
+_SYNTHESIZER_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "headline": {"type": "string"},
+        "health_score": {"type": "integer"},
+        "summary": {"type": "string"},
+        "top_actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "emoji": {"type": "string"},
+                    "title": {"type": "string"},
+                    "detail": {"type": "string"},
+                    "source_agent": {
+                        "type": "string",
+                        "enum": ["transactions", "analytics", "settings"],
+                    },
+                },
+                "required": ["emoji", "title", "detail", "source_agent"],
+            },
+        },
+        "sub_agent_calls": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["transactions", "analytics", "settings"]},
+        },
+    },
+    "required": ["headline", "health_score", "summary", "top_actions", "sub_agent_calls"],
+}
+
+_SYNTHESIZER_PROMPT = (
+    "You are the Dashboard SUPERVISOR agent. Three specialist agents just ran in parallel "
+    "and produced structured findings. Your job is to fold their outputs into ONE unified "
+    "command-centre card for the user.\n"
+    "Rules:\n"
+    "- headline: a single motivating sentence.\n"
+    "- health_score: integer 0-100 (higher is healthier), based on the specialists' data.\n"
+    "- summary: one short paragraph.\n"
+    "- top_actions: 3-5 concrete action items, each traced back to which specialist raised it "
+    "(transactions | analytics | settings) via source_agent.\n"
+    "- sub_agent_calls: list every specialist you drew from (the parallel branch names).\n"
+    "- Use ONLY the numbers present in the specialist outputs. Never invent figures."
+)
+
+
+def _synthesize(state: AgentState) -> AgentState:
+    subs = state.get("sub_results", [])
+    payload = {r["agent"]: r["result"] for r in subs}
+
+    llm = _llm("supervisor_output", _SYNTHESIZER_SCHEMA, 0.4)
+    response = llm.invoke([
+        SystemMessage(content=_SYNTHESIZER_PROMPT),
+        HumanMessage(content=(
+            "Specialist agent outputs (parallel fan-out):\n\n"
+            + json.dumps(payload, indent=2, default=str)
+        )),
+    ])
+    return {
+        "result": json.loads(response.content),
+        "agent": "supervisor",
+        "model": "gpt-4o-mini",
+    }
+
+
 # ------------------------- Router -------------------------
 
 def _route(state: AgentState) -> str:
     tab = state.get("tab")
-    if tab not in _AGENTS:
-        raise ValueError(f"Unknown tab '{tab}'. Must be one of: {list(_AGENTS)}")
-    return tab
+    if tab == "dashboard":
+        return "supervisor"
+    if tab in ("transactions", "analytics", "settings"):
+        return tab
+    raise ValueError(f"Unknown tab '{tab}'.")
 
 
 # ------------------------- Graph builder -------------------------
 
 def build_graph():
-    """Compile and return the LangGraph app."""
     graph = StateGraph(AgentState)
 
-    # Register every agent as a node
-    for tab in _AGENTS:
-        graph.add_node(tab, _make_node(tab))
+    # Single-tab specialist nodes
+    graph.add_node("transactions", _single_node("transactions"))
+    graph.add_node("analytics",    _single_node("analytics"))
+    graph.add_node("settings",     _single_node("settings"))
 
-    # START -> conditional -> {tab node}
+    # Supervisor fan-out subgraph
+    graph.add_node("supervisor",         _supervisor)
+    graph.add_node("worker_transactions", _worker_node("transactions"))
+    graph.add_node("worker_analytics",    _worker_node("analytics"))
+    graph.add_node("worker_settings",     _worker_node("settings"))
+    graph.add_node("synthesizer",         _synthesize)
+
+    # START -> router -> {supervisor | specialist}
     graph.add_conditional_edges(
         START,
         _route,
-        {tab: tab for tab in _AGENTS},
+        {
+            "supervisor":   "supervisor",
+            "transactions": "transactions",
+            "analytics":    "analytics",
+            "settings":     "settings",
+        },
     )
 
-    # Every tab node terminates the run
-    for tab in _AGENTS:
-        graph.add_edge(tab, END)
+    # Supervisor fans out to 3 workers in parallel
+    graph.add_edge("supervisor", "worker_transactions")
+    graph.add_edge("supervisor", "worker_analytics")
+    graph.add_edge("supervisor", "worker_settings")
+
+    # Workers converge on the synthesizer (LangGraph waits for all three)
+    graph.add_edge("worker_transactions", "synthesizer")
+    graph.add_edge("worker_analytics",    "synthesizer")
+    graph.add_edge("worker_settings",     "synthesizer")
+
+    # Terminal edges
+    graph.add_edge("synthesizer", END)
+    graph.add_edge("transactions", END)
+    graph.add_edge("analytics",    END)
+    graph.add_edge("settings",     END)
 
     return graph.compile()
 
 
-# Compile once at import time so the demo & server share it
 app_graph = build_graph()
 
 
@@ -163,28 +278,32 @@ app_graph = build_graph()
 
 def run_tab(tab: str, transactions: list[dict]) -> dict:
     """Invoke the graph for a single tab click and return the final state."""
-    final = app_graph.invoke({"tab": tab, "transactions": transactions})
-    return {
+    final = app_graph.invoke({"tab": tab, "transactions": transactions, "sub_results": []})
+    payload = {
         "agent": final.get("agent"),
         "model": final.get("model"),
         "stats": final.get("stats"),
         "result": final.get("result"),
     }
+    # Include the parallel specialist outputs when running the supervisor path
+    if tab == "dashboard":
+        payload["sub_results"] = final.get("sub_results", [])
+    return payload
 
 
 def tabs() -> list[str]:
-    return list(_AGENTS.keys())
+    return ["dashboard", "transactions", "analytics", "settings"]
 
 
 def render_diagram() -> str:
-    """Return an ASCII rendering of the compiled graph (useful for the CLI)."""
     try:
         return app_graph.get_graph().draw_ascii()
     except Exception:
-        # draw_ascii needs `grandalf`; return a hand-drawn fallback
         return (
-            "START ──(router)─▶ dashboard\n"
-            "                └─▶ transactions\n"
-            "                └─▶ analytics\n"
-            "                └─▶ settings   ─▶ END"
+            "START ─(router)─▶ supervisor ─fan-out─▶ worker_transactions ┐\n"
+            "                                    ├─▶ worker_analytics    ├─▶ synthesizer ─▶ END\n"
+            "                                    └─▶ worker_settings     ┘\n"
+            "              └▶ transactions ─▶ END\n"
+            "              └▶ analytics    ─▶ END\n"
+            "              └▶ settings     ─▶ END"
         )
