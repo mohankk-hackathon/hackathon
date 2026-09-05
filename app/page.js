@@ -60,22 +60,6 @@ const findDuplicate = (tx, existing) => {
   }) || null
 }
 
-const seedTransactions = () => {
-  const today = new Date()
-  const d = (offset) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset).toISOString()
-  return [
-    { id: crypto.randomUUID(), type: 'income',  category: 'Salary',         amount: 1850.00, note: 'October payroll',        date: d(2) },
-    { id: crypto.randomUUID(), type: 'income',  category: 'Gift',           amount: 380.20,  note: 'Birthday from mom',      date: d(5) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Food & Dining',  amount: 87.65,  note: 'Groceries',              date: d(1) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Food & Dining',  amount: 24.20,  note: 'Ramen with friends',     date: d(3) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Utilities',      amount: 82.49,  note: 'Electricity bill',       date: d(4) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Transportation', amount: 43.50,  note: 'Uber rides',             date: d(6) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Entertainment',  amount: 15.99,  note: 'Netflix',                date: d(2) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Shopping',       amount: 129.99, note: 'New sneakers',           date: d(7) },
-    { id: crypto.randomUUID(), type: 'expense', category: 'Healthcare',     amount: 60.00,  note: 'Pharmacy',               date: d(8) },
-  ]
-}
-
 const formatCurrency = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 function useClock() {
@@ -90,8 +74,6 @@ function useClock() {
 function App() {
   const [transactions, setTransactions] = useState([])
   const [tab, setTab] = useState('dashboard')
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ type: 'expense', category: 'Food & Dining', amount: '', note: '' })
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   // AI Import state
@@ -106,11 +88,12 @@ function App() {
     try {
       const raw = localStorage.getItem('ft.transactions')
       if (raw) setTransactions(JSON.parse(raw))
-      else setTransactions(seedTransactions())
-    } catch { setTransactions(seedTransactions()) }
+    } catch {}
   }, [])
   useEffect(() => {
-    if (transactions.length) localStorage.setItem('ft.transactions', JSON.stringify(transactions))
+    try {
+      localStorage.setItem('ft.transactions', JSON.stringify(transactions))
+    } catch {}
   }, [transactions])
 
   const now = useClock()
@@ -124,6 +107,37 @@ function App() {
       else expense += Number(t.amount)
     })
     return { income, expense, net: income - expense }
+  }, [transactions])
+
+  // Real month-over-month deltas — replaces the previous hardcoded +14%.
+  // We compare "this month so far" vs "same number of days in previous month"
+  // so a partial current month doesn't produce misleading percentages.
+  const deltas = useMemo(() => {
+    const now = new Date()
+    const dayOfMonth = now.getDate()
+    const thisStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const lastStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    // Same-day-of-month cutoff in the previous month (clamped to that month's length)
+    const lastMonthLength = new Date(now.getFullYear(), now.getMonth(), 0).getDate()
+    const lastCutoffDay = Math.min(dayOfMonth, lastMonthLength)
+    const lastEnd = new Date(now.getFullYear(), now.getMonth() - 1, lastCutoffDay, 23, 59, 59)
+    const inRange = (t, s, e) => { const d = new Date(t.date); return d >= s && d <= e }
+    const sum = (arr, type) => arr.filter(t => t.type === type).reduce((s, t) => s + Number(t.amount), 0)
+    const thisM = transactions.filter(t => inRange(t, thisStart, now))
+    const lastM = transactions.filter(t => inRange(t, lastStart, lastEnd))
+    const iThis = sum(thisM, 'income'),  iLast = sum(lastM, 'income')
+    const eThis = sum(thisM, 'expense'), eLast = sum(lastM, 'expense')
+    const nThis = iThis - eThis,         nLast = iLast - eLast
+    const pct = (curr, prev) => {
+      if (!prev) return curr > 0 ? 100 : curr < 0 ? -100 : 0
+      return Math.round(((curr - prev) / Math.abs(prev)) * 100)
+    }
+    return {
+      income:  pct(iThis, iLast),
+      expense: pct(eThis, eLast),
+      net:     pct(nThis, nLast),
+      hasHistory: transactions.length > 0 && (iLast !== 0 || eLast !== 0),
+    }
   }, [transactions])
 
   const byCategory = useMemo(() => {
@@ -153,21 +167,6 @@ function App() {
     })
     return days
   }, [transactions])
-
-  const addTransaction = () => {
-    if (!form.amount || Number(form.amount) <= 0) return
-    const tx = {
-      id: crypto.randomUUID(),
-      type: form.type,
-      category: form.category,
-      amount: Number(form.amount),
-      note: form.note || form.category,
-      date: new Date().toISOString(),
-    }
-    setTransactions(prev => [tx, ...prev])
-    setForm({ type: 'expense', category: 'Food & Dining', amount: '', note: '' })
-    setOpen(false)
-  }
 
   const removeTx = (id) => setTransactions(prev => prev.filter(t => t.id !== id))
 
@@ -247,14 +246,9 @@ function App() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => setImportOpen(true)} variant="outline" className="h-12 px-4 rounded-2xl border-white/10 bg-slate-900/70 hover:bg-slate-800 text-slate-100 font-semibold text-sm">
-            <Sparkles className="w-4 h-4 mr-1.5 text-emerald-400" /> Import CSV / PDF
-          </Button>
-          <Button onClick={() => setOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
-            <Plus className="w-5 h-5 mr-1" strokeWidth={3} /> Add Transaction
-          </Button>
-        </div>
+        <Button onClick={() => setImportOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
+          <Sparkles className="w-5 h-5 mr-1.5" strokeWidth={2.5} /> Import CSV / PDF
+        </Button>
       </header>
 
       {/* Tabs */}
@@ -277,56 +271,15 @@ function App() {
       <AnimatePresence mode="wait">
         <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}>
           {tab === 'dashboard' && (
-            <Dashboard totals={totals} byCategory={byCategory} donutTotal={donutTotal} transactions={transactions} />
+            <Dashboard totals={totals} deltas={deltas} byCategory={byCategory} donutTotal={donutTotal} transactions={transactions} onOpenImport={() => setImportOpen(true)} />
           )}
           {tab === 'transactions' && (
             <Transactions transactions={filteredTx} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} onDelete={removeTx} />
           )}
           {tab === 'analytics' && <Analytics trend={trend} byCategory={byCategory} />}
-          {tab === 'settings' && <SettingsPanel onReset={() => { localStorage.removeItem('ft.transactions'); setTransactions(seedTransactions()) }} onWipe={() => { localStorage.removeItem('ft.transactions'); setTransactions([]) }} />}
+          {tab === 'settings' && <SettingsPanel onWipe={() => { localStorage.removeItem('ft.transactions'); setTransactions([]) }} />}
         </motion.div>
       </AnimatePresence>
-
-      {/* Add transaction dialog */}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="glass-card border-white/10 max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-xl">Add Transaction</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-2 bg-slate-900/70 p-1 rounded-xl border border-white/5">
-              {['expense', 'income'].map((t) => (
-                <button key={t} onClick={() => setForm({ ...form, type: t, category: t === 'income' ? 'Salary' : 'Food & Dining' })} className={`h-10 rounded-lg text-sm font-semibold capitalize transition ${form.type === t ? (t === 'income' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300') : 'text-slate-400'}`}>{t}</button>
-              ))}
-            </div>
-            <div className="grid gap-2">
-              <Label>Amount</Label>
-              <Input type="number" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="bg-slate-900/70 border-white/10 h-12 text-lg number-font" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Category</Label>
-              <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                <SelectTrigger className="bg-slate-900/70 border-white/10 h-12"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.filter(c => form.type === 'income' ? ['Salary','Gift','Other'].includes(c.key) : !['Salary','Gift'].includes(c.key)).map(c => (
-                    <SelectItem key={c.key} value={c.key}>
-                      <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: c.color }} />{c.key}</div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Note (optional)</Label>
-              <Input placeholder="e.g. Lunch with team" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} className="bg-slate-900/70 border-white/10 h-12" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpen(false)} className="text-slate-400">Cancel</Button>
-            <Button onClick={addTransaction} className="bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 text-slate-900 font-bold">Add</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Import CSV / PDF dialog */}
       <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) { setImportPreview(null); setImportError(''); setImportFileName('') } }}>
@@ -458,18 +411,30 @@ function App() {
   )
 }
 
-function StatCard({ label, value, delta, tone }) {
+function StatCard({ label, value, delta, tone, showDelta }) {
   const toneCls = tone === 'income' ? 'text-emerald-400' : tone === 'expense' ? 'text-rose-400' : 'text-emerald-400'
+  // For expenses, an INCREASE is bad (rose); for income & net, an INCREASE is good (emerald).
+  const goodDirection = tone === 'expense' ? (delta <= 0) : (delta >= 0)
+  const deltaCls = goodDirection ? 'text-emerald-400' : 'text-rose-400'
+  const Arrow = delta >= 0 ? ArrowUpRight : ArrowDownRight
+  const sign = delta > 0 ? '+' : ''
   return (
     <div className="glass-card rounded-3xl p-6 md:p-7">
       <div className="text-slate-400 text-sm font-medium">{label}</div>
       <div className={`mt-3 text-4xl md:text-5xl font-black number-font ${toneCls}`}>{value}</div>
-      <div className="mt-3 text-xs font-semibold text-emerald-400 flex items-center gap-1">+{delta}% <ArrowUpRight className="w-3.5 h-3.5" /></div>
+      {showDelta ? (
+        <div className={`mt-3 text-xs font-semibold flex items-center gap-1 ${deltaCls}`}>
+          {sign}{delta}% <Arrow className="w-3.5 h-3.5" />
+          <span className="text-slate-500 font-normal ml-1">vs last month</span>
+        </div>
+      ) : (
+        <div className="mt-3 text-xs text-slate-500">No prior month for comparison</div>
+      )}
     </div>
   )
 }
 
-function Dashboard({ totals, byCategory, donutTotal, transactions }) {
+function Dashboard({ totals, deltas, byCategory, donutTotal, transactions, onOpenImport }) {
   const recent = transactions.slice(0, 6)
   const [insights, setInsights] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
@@ -509,11 +474,30 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
 
   return (
     <div className="mt-6 grid gap-5">
+      {/* Empty-state onboarding */}
+      {transactions.length === 0 && (
+        <div className="glass-card rounded-3xl p-8 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto">
+            <Sparkles className="w-8 h-8 text-emerald-300" />
+          </div>
+          <h2 className="mt-4 text-2xl font-black">Nothing to show yet</h2>
+          <p className="mt-1 text-slate-400 max-w-md mx-auto">Import a CSV or PDF bank statement and the app will fill up with your real numbers. GPT-4o will auto-categorise every row.</p>
+          <div className="mt-5 flex items-center justify-center gap-3 flex-wrap">
+            <Button onClick={onOpenImport} className="h-11 px-5 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 text-slate-900 font-bold">
+              <Sparkles className="w-4 h-4 mr-1.5" strokeWidth={2.5} /> Import Statement
+            </Button>
+            <a href="/sample-transactions.csv" download className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-300 hover:text-emerald-200 transition">
+              <FileText className="w-4 h-4" /> Download sample CSV →
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Top stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        <StatCard label="Total Income" value={formatCurrency(totals.income)} delta={14} tone="income" />
-        <StatCard label="Total Expenses" value={formatCurrency(totals.expense)} delta={14} tone="expense" />
-        <StatCard label="Net Profit" value={formatCurrency(totals.net)} delta={14} tone="income" />
+        <StatCard label="Total Income"   value={formatCurrency(totals.income)}  delta={deltas.income}  tone="income"  showDelta={!!deltas.hasHistory} />
+        <StatCard label="Total Expenses" value={formatCurrency(totals.expense)} delta={deltas.expense} tone="expense" showDelta={!!deltas.hasHistory} />
+        <StatCard label="Net Profit"     value={formatCurrency(totals.net)}     delta={deltas.net}     tone="income"  showDelta={!!deltas.hasHistory} />
       </div>
 
       {/* Smart Insights */}
@@ -521,7 +505,6 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
 
       {/* AI Coach - streaming chat with memory */}
       <CoachPanel transactions={transactions} />
-
       {/* Middle row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Donut */}
@@ -539,24 +522,49 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
             </div>
             <div className="text-center relative z-10">
               <div className="text-5xl md:text-6xl font-black number-font">${Math.round(donutTotal)}</div>
-              <div className="mt-1 text-xs font-semibold text-emerald-400 flex items-center justify-center gap-1">+14% <ArrowUpRight className="w-3 h-3" /></div>
+              {deltas.hasHistory ? (
+                <div className={`mt-1 text-xs font-semibold flex items-center justify-center gap-1 ${deltas.expense <= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {deltas.expense > 0 ? '+' : ''}{deltas.expense}% {deltas.expense >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                </div>
+              ) : (
+                <div className="mt-1 text-xs text-slate-500">this month</div>
+              )}
             </div>
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4">
-            <div className="flex items-center gap-3">
-              <div className="relative w-14 h-14">
-                <svg viewBox="0 0 40 40" className="w-14 h-14"><circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4" /><circle cx="20" cy="20" r="16" fill="none" stroke="#34d399" strokeWidth="4" strokeDasharray="75 100" strokeDashoffset="25" strokeLinecap="round" transform="rotate(-90 20 20)" /></svg>
-                <ArrowUpRight className="absolute inset-0 m-auto w-5 h-5 text-emerald-400" strokeWidth={3} />
-              </div>
-              <div><div className="text-slate-400 text-sm">Income</div><div className="font-bold text-lg number-font">+ {formatCurrency(totals.income)}</div></div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="relative w-14 h-14">
-                <svg viewBox="0 0 40 40" className="w-14 h-14"><circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4" /><circle cx="20" cy="20" r="16" fill="none" stroke="#f43f5e" strokeWidth="4" strokeDasharray="55 100" strokeDashoffset="25" strokeLinecap="round" transform="rotate(-90 20 20)" /></svg>
-                <ArrowDownRight className="absolute inset-0 m-auto w-5 h-5 text-rose-400" strokeWidth={3} />
-              </div>
-              <div><div className="text-slate-400 text-sm">Outcome</div><div className="font-bold text-lg number-font">− {formatCurrency(totals.expense)}</div></div>
-            </div>
+            {(() => {
+              const total = (totals.income || 0) + (totals.expense || 0)
+              const incomeArc  = total ? Math.round(((totals.income  || 0) / total) * 100) : 0
+              const expenseArc = total ? Math.round(((totals.expense || 0) / total) * 100) : 0
+              return (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-14 h-14">
+                      <svg viewBox="0 0 40 40" className="w-14 h-14">
+                        <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4" />
+                        <circle cx="20" cy="20" r="16" fill="none" stroke="#34d399" strokeWidth="4"
+                          strokeDasharray={`${incomeArc} 100`} strokeDashoffset="25" strokeLinecap="round"
+                          transform="rotate(-90 20 20)" />
+                      </svg>
+                      <ArrowUpRight className="absolute inset-0 m-auto w-5 h-5 text-emerald-400" strokeWidth={3} />
+                    </div>
+                    <div><div className="text-slate-400 text-sm">Income</div><div className="font-bold text-lg number-font">+ {formatCurrency(totals.income)}</div></div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-14 h-14">
+                      <svg viewBox="0 0 40 40" className="w-14 h-14">
+                        <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4" />
+                        <circle cx="20" cy="20" r="16" fill="none" stroke="#f43f5e" strokeWidth="4"
+                          strokeDasharray={`${expenseArc} 100`} strokeDashoffset="25" strokeLinecap="round"
+                          transform="rotate(-90 20 20)" />
+                      </svg>
+                      <ArrowDownRight className="absolute inset-0 m-auto w-5 h-5 text-rose-400" strokeWidth={3} />
+                    </div>
+                    <div><div className="text-slate-400 text-sm">Outcome</div><div className="font-bold text-lg number-font">− {formatCurrency(totals.expense)}</div></div>
+                  </div>
+                </>
+              )
+            })()}
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4">
             {byCategory.slice(0, 4).map(c => {
@@ -945,7 +953,7 @@ function Analytics({ trend, byCategory }) {
   )
 }
 
-function SettingsPanel({ onReset, onWipe }) {
+function SettingsPanel({ onWipe }) {
   return (
     <div className="mt-6 grid gap-5 max-w-2xl">
       <div className="glass-card rounded-3xl p-6 md:p-8">
@@ -957,8 +965,11 @@ function SettingsPanel({ onReset, onWipe }) {
       </div>
       <div className="glass-card rounded-3xl p-6 md:p-8">
         <h2 className="text-2xl md:text-3xl font-black">Data</h2>
+        <p className="mt-1 text-sm text-slate-400">All transactions live in this browser's localStorage. Grab the sample CSV to populate the app, or wipe everything below.</p>
         <div className="mt-4 flex flex-wrap gap-3">
-          <Button onClick={onReset} variant="outline" className="border-white/10 bg-slate-900/70">Reset to sample data</Button>
+          <a href="/sample-transactions.csv" download className="inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-slate-900/70 border border-white/10 text-sm font-semibold text-emerald-300 hover:text-emerald-200 hover:bg-slate-800 transition">
+            <FileText className="w-4 h-4" /> Download sample CSV
+          </a>
           <Button onClick={onWipe} variant="destructive">Delete all transactions</Button>
         </div>
       </div>
