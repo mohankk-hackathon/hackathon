@@ -1,31 +1,20 @@
-"""Orchestrator - routes a tab name to the correct agent."""
+"""Orchestrator - thin wrapper around the LangGraph app.
+
+Kept for backwards compatibility with the previous simple-pattern API.
+"""
 from __future__ import annotations
 
 from typing import Any
 
-from .dashboard import DashboardAgent
-from .transactions import TransactionAgent
-from .analytics import AnalyticsAgent
-from .settings_agent import SettingsAgent
+from .graph import run_tab, tabs
 
 
 class Orchestrator:
-    """Simple registry-based orchestrator (no cross-agent handoffs)."""
-
-    def __init__(self) -> None:
-        self._registry = {
-            "dashboard": DashboardAgent(),
-            "transactions": TransactionAgent(),
-            "analytics": AnalyticsAgent(),
-            "settings": SettingsAgent(),
-        }
+    """LangGraph-backed orchestrator. `run(tab, txs)` invokes the graph."""
 
     @property
     def tabs(self) -> list[str]:
-        return list(self._registry.keys())
+        return tabs()
 
     def run(self, tab: str, transactions: list[dict]) -> dict[str, Any]:
-        agent = self._registry.get(tab)
-        if agent is None:
-            raise ValueError(f"Unknown tab '{tab}'. Valid tabs: {self.tabs}")
-        return agent.run(transactions)
+        return run_tab(tab, transactions)
