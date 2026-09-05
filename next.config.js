@@ -1,19 +1,22 @@
+/** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  // NOTE: 'output: standalone' removed — it is meant for self-hosted/Docker
+  // deployments and causes Vercel to skip Vercel-optimised tracing. Vercel
+  // handles the build target automatically.
   images: {
     unoptimized: true,
     remotePatterns: [
       { protocol: 'https', hostname: 'avatars.githubusercontent.com', pathname: '/**' },
     ],
   },
-  // Renamed from experimental.serverComponentsExternalPackages in Next 15
-  serverExternalPackages: ['mongodb'],
+  // Keep native / dynamic-import packages out of the bundle so their runtime
+  // FS lookups (pdf-parse) and native drivers (mongodb) keep working on Vercel.
+  serverExternalPackages: ['mongodb', 'pdf-parse'],
   webpack(config, { dev }) {
     if (dev) {
-      // Reduce CPU/memory from file watching
       config.watchOptions = {
-        poll: 2000, // check every 2 seconds
-        aggregateTimeout: 300, // wait before rebuilding
+        poll: 2000,
+        aggregateTimeout: 300,
         ignored: ['**/node_modules'],
       };
     }

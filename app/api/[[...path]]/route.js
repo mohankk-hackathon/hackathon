@@ -238,7 +238,7 @@ async function handleRoute(request, { params }) {
   const method = request.method
 
   try {
-    if (route === '/' && method === 'GET') {
+    if ((route === '/' || route === '/root') && method === 'GET') {
       return cors(NextResponse.json({ message: 'Finance Tracker API' }))
     }
 
