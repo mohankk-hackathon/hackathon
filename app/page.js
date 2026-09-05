@@ -470,6 +470,42 @@ function StatCard({ label, value, delta, tone }) {
 
 function Dashboard({ totals, byCategory, donutTotal, transactions }) {
   const recent = transactions.slice(0, 6)
+  const [insights, setInsights] = useState(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsError, setInsightsError] = useState('')
+
+  const loadInsights = async (force = false) => {
+    if (!transactions.length) return
+    // Check cache: valid for 30 min AND tx fingerprint matches
+    const fingerprint = `${transactions.length}:${transactions[0]?.id || ''}`
+    try {
+      const cached = JSON.parse(localStorage.getItem('ft.insights') || 'null')
+      if (!force && cached && cached.fingerprint === fingerprint && Date.now() - cached.at < 30 * 60 * 1000) {
+        setInsights(cached.data)
+        return
+      }
+    } catch {}
+
+    setInsightsLoading(true); setInsightsError('')
+    try {
+      const res = await fetch('/api/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to generate insights')
+      setInsights(data.insights || [])
+      localStorage.setItem('ft.insights', JSON.stringify({ fingerprint, at: Date.now(), data: data.insights || [] }))
+    } catch (e) {
+      setInsightsError(e.message)
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
+  useEffect(() => { loadInsights(false) }, [transactions.length])
+
   return (
     <div className="mt-6 grid gap-5">
       {/* Top stats */}
@@ -478,6 +514,9 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
         <StatCard label="Total Expenses" value={formatCurrency(totals.expense)} delta={14} tone="expense" />
         <StatCard label="Net Profit" value={formatCurrency(totals.net)} delta={14} tone="income" />
       </div>
+
+      {/* Smart Insights */}
+      <InsightsSection insights={insights} loading={insightsLoading} error={insightsError} onRefresh={() => loadInsights(true)} hasData={transactions.length > 0} />
 
       {/* Middle row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -565,6 +604,74 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
           {recent.length === 0 && <div className="text-slate-400 py-6 text-sm">Nothing yet.</div>}
         </div>
       </div>
+    </div>
+  )
+}
+
+function InsightsSection({ insights, loading, error, onRefresh, hasData }) {
+  const toneStyles = {
+    positive: { bg: 'bg-emerald-500/10',  border: 'border-emerald-500/30',  text: 'text-emerald-200',  accent: 'text-emerald-400' },
+    warning:  { bg: 'bg-amber-500/10',    border: 'border-amber-500/30',    text: 'text-amber-100',    accent: 'text-amber-400'   },
+    info:     { bg: 'bg-sky-500/10',      border: 'border-sky-500/30',      text: 'text-sky-100',      accent: 'text-sky-400'     },
+  }
+
+  return (
+    <div className="glass-card rounded-3xl p-6 md:p-7">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-emerald-300" />
+          </div>
+          <div>
+            <h2 className="text-xl md:text-2xl font-black leading-tight">Smart Insights</h2>
+            <p className="text-xs text-slate-400">Weekly nudges from GPT-4o about your spending</p>
+          </div>
+        </div>
+        <Button onClick={onRefresh} disabled={loading || !hasData} variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-white/5">
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Sparkles className="w-3.5 h-3.5 mr-1.5 text-emerald-400" /> Refresh</>}
+        </Button>
+      </div>
+
+      {error && <div className="mt-4 rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-sm text-rose-300">{error}</div>}
+
+      {!error && loading && !insights && (
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[0,1,2].map(i => (
+            <div key={i} className="rounded-2xl p-4 border border-white/5 bg-slate-900/40 animate-pulse">
+              <div className="w-10 h-10 rounded-xl bg-slate-800" />
+              <div className="mt-3 h-4 bg-slate-800 rounded w-3/4" />
+              <div className="mt-2 h-3 bg-slate-800 rounded w-full" />
+              <div className="mt-1 h-3 bg-slate-800 rounded w-5/6" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!error && insights && (
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {insights.map((ins, i) => {
+            const t = toneStyles[ins.tone] || toneStyles.info
+            return (
+              <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                className={`rounded-2xl p-4 border ${t.bg} ${t.border}`}>
+                <div className="flex items-start gap-3">
+                  <div className="text-3xl leading-none flex-shrink-0" aria-hidden>{ins.emoji}</div>
+                  <div className="min-w-0">
+                    <div className={`font-bold ${t.text} leading-snug`}>{ins.title}</div>
+                    <div className="mt-1 text-sm text-slate-300/90 leading-relaxed">{ins.message}</div>
+                  </div>
+                </div>
+              </motion.div>
+            )
+          })}
+        </div>
+      )}
+
+      {!error && !loading && !insights && !hasData && (
+        <div className="mt-4 rounded-xl border border-white/5 p-6 text-center text-sm text-slate-400">
+          Add a few transactions and I'll spot patterns for you here.
+        </div>
+      )}
     </div>
   )
 }
