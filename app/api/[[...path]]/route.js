@@ -1,102 +1,148 @@
-import { MongoClient } from 'mongodb'
-import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
+import OpenAI from 'openai'
 
-// MongoDB connection
-let client
-let db
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-  }
-  return db
-}
+const CATEGORIES = [
+  'Food & Dining', 'Utilities', 'Transportation', 'Entertainment',
+  'Shopping', 'Healthcare', 'Housing', 'Coffee', 'Salary', 'Gift', 'Other',
+]
 
-// Helper function to handle CORS
-function handleCORS(response) {
+function cors(response) {
   response.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  response.headers.set('Access-Control-Allow-Credentials', 'true')
   return response
 }
 
-// OPTIONS handler for CORS
 export async function OPTIONS() {
-  return handleCORS(new NextResponse(null, { status: 200 }))
+  return cors(new NextResponse(null, { status: 200 }))
 }
 
-// Route handler function
+async function extractText(file) {
+  const buf = Buffer.from(await file.arrayBuffer())
+  const name = (file.name || '').toLowerCase()
+
+  if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+    // Lazy-load pdf-parse to avoid its debug harness at module load time
+    const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default
+    const parsed = await pdfParse(buf)
+    return parsed.text
+  }
+  // CSV / text
+  return buf.toString('utf-8')
+}
+
+async function classify(text) {
+  const openai = new OpenAI({
+    apiKey: process.env.EMERGENT_LLM_KEY,
+    baseURL: process.env.EMERGENT_BASE_URL,
+  })
+
+  const trimmed = text.length > 80000 ? text.slice(0, 80000) : text
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    temperature: 0,
+    messages: [
+      {
+        role: 'system',
+        content: `You extract and classify bank / credit-card statement lines.
+Return every transaction you can find in the input.
+Rules:
+- Use ONLY these categories: ${CATEGORIES.join(', ')}.
+- "type" is "income" for credits/deposits/refunds/payroll and "expense" for debits/withdrawals/purchases.
+- "amount" must be a positive number (absolute value), no currency symbol.
+- "date" must be YYYY-MM-DD. If the year is missing, use the current year.
+- "note" is a short cleaned merchant / description (e.g. "AMZN MKTPLACE" -> "Amazon").
+- Skip balance rows, headers, page numbers, and empty lines.
+- Never invent transactions.`,
+      },
+      {
+        role: 'user',
+        content: `Statement text:\n\n${trimmed}`,
+      },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'bank_transactions',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            transactions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  date: { type: 'string' },
+                  note: { type: 'string' },
+                  amount: { type: 'number' },
+                  type: { type: 'string', enum: ['income', 'expense'] },
+                  category: { type: 'string', enum: CATEGORIES },
+                },
+                required: ['date', 'note', 'amount', 'type', 'category'],
+              },
+            },
+          },
+          required: ['transactions'],
+        },
+      },
+    },
+  })
+
+  const raw = completion.choices?.[0]?.message?.content
+  if (!raw) return []
+  const parsed = JSON.parse(raw)
+  return parsed.transactions || []
+}
+
 async function handleRoute(request, { params }) {
   const { path = [] } = await params
   const route = `/${path.join('/')}`
   const method = request.method
 
   try {
-    const db = await connectToMongo()
-
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/root' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
     if (route === '/' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
+      return cors(NextResponse.json({ message: 'Finance Tracker API' }))
     }
 
-    // Status endpoints - POST /api/status
-    if (route === '/status' && method === 'POST') {
-      const body = await request.json()
-      
-      if (!body.client_name) {
-        return handleCORS(NextResponse.json(
-          { error: "client_name is required" }, 
-          { status: 400 }
-        ))
+    if (route === '/import' && method === 'POST') {
+      const form = await request.formData()
+      const file = form.get('file')
+      if (!file || typeof file === 'string') {
+        return cors(NextResponse.json({ error: 'file is required' }, { status: 400 }))
       }
 
-      const statusObj = {
-        id: uuidv4(),
-        client_name: body.client_name,
-        timestamp: new Date()
+      const text = await extractText(file)
+      if (!text || text.trim().length < 5) {
+        return cors(NextResponse.json({ error: 'Could not extract text from file' }, { status: 422 }))
       }
 
-      await db.collection('status_checks').insertOne(statusObj)
-      return handleCORS(NextResponse.json(statusObj))
+      const transactions = await classify(text)
+
+      return cors(NextResponse.json({
+        count: transactions.length,
+        transactions,
+        preview: text.slice(0, 500),
+      }))
     }
 
-    // Status endpoints - GET /api/status
-    if (route === '/status' && method === 'GET') {
-      const statusChecks = await db.collection('status_checks')
-        .find({})
-        .limit(1000)
-        .toArray()
-
-      // Remove MongoDB's _id field from response
-      const cleanedStatusChecks = statusChecks.map(({ _id, ...rest }) => rest)
-      
-      return handleCORS(NextResponse.json(cleanedStatusChecks))
-    }
-
-    // Route not found
-    return handleCORS(NextResponse.json(
-      { error: `Route ${route} not found` }, 
-      { status: 404 }
-    ))
-
+    return cors(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))
   } catch (error) {
-    console.error('API Error:', error)
-    return handleCORS(NextResponse.json(
-      { error: "Internal server error" }, 
-      { status: 500 }
+    console.error('API Error:', error?.message, error?.stack)
+    return cors(NextResponse.json(
+      { error: error?.message || 'Internal server error' },
+      { status: 500 },
     ))
   }
 }
 
-// Export all HTTP methods
 export const GET = handleRoute
 export const POST = handleRoute
 export const PUT = handleRoute

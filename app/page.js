@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Wallet, Plus, LayoutGrid, Receipt, TrendingUp, Settings as SettingsIcon,
   ArrowUpRight, ArrowDownRight, Trash2, Search, Utensils, Bolt, Car, Film,
-  ShoppingBag, HeartPulse, Home, Coffee, Briefcase, Gift, MoreHorizontal
+  ShoppingBag, HeartPulse, Home, Coffee, Briefcase, Gift, MoreHorizontal,
+  Upload, Sparkles, FileText, Check, X, Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -70,6 +71,12 @@ function App() {
   const [form, setForm] = useState({ type: 'expense', category: 'Food & Dining', amount: '', note: '' })
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
+  // AI Import state
+  const [importOpen, setImportOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState('')
+  const [importPreview, setImportPreview] = useState(null) // array of tx from LLM
+  const [importFileName, setImportFileName] = useState('')
 
   // load / save
   useEffect(() => {
@@ -141,6 +148,49 @@ function App() {
 
   const removeTx = (id) => setTransactions(prev => prev.filter(t => t.id !== id))
 
+  const handleImportFile = async (file) => {
+    if (!file) return
+    setImportError('')
+    setImportPreview(null)
+    setImporting(true)
+    setImportFileName(file.name)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/import', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Import failed')
+      if (!data.transactions?.length) throw new Error('No transactions found in the file')
+      // Attach ids + editable flag
+      setImportPreview(data.transactions.map(t => ({ ...t, id: crypto.randomUUID(), _keep: true })))
+    } catch (e) {
+      setImportError(e.message)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const confirmImport = () => {
+    if (!importPreview) return
+    const kept = importPreview.filter(t => t._keep).map(t => ({
+      id: t.id,
+      type: t.type,
+      category: t.category,
+      amount: Number(t.amount),
+      note: t.note,
+      date: new Date(t.date).toISOString(),
+    }))
+    setTransactions(prev => [...kept, ...prev])
+    setImportOpen(false)
+    setImportPreview(null)
+    setImportFileName('')
+    setTab('transactions')
+  }
+
+  const updatePreviewRow = (id, patch) => {
+    setImportPreview(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
+  }
+
   const filteredTx = transactions
     .filter(t => filter === 'all' ? true : t.type === filter)
     .filter(t => search ? (t.note + ' ' + t.category).toLowerCase().includes(search.toLowerCase()) : true)
@@ -162,9 +212,14 @@ function App() {
             </div>
           </div>
         </div>
-        <Button onClick={() => setOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
-          <Plus className="w-5 h-5 mr-1" strokeWidth={3} /> Add Transaction
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setImportOpen(true)} variant="outline" className="h-12 px-4 rounded-2xl border-white/10 bg-slate-900/70 hover:bg-slate-800 text-slate-100 font-semibold text-sm">
+            <Sparkles className="w-4 h-4 mr-1.5 text-emerald-400" /> Import CSV / PDF
+          </Button>
+          <Button onClick={() => setOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
+            <Plus className="w-5 h-5 mr-1" strokeWidth={3} /> Add Transaction
+          </Button>
+        </div>
       </header>
 
       {/* Tabs */}
@@ -235,6 +290,109 @@ function App() {
             <Button variant="ghost" onClick={() => setOpen(false)} className="text-slate-400">Cancel</Button>
             <Button onClick={addTransaction} className="bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 text-slate-900 font-bold">Add</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import CSV / PDF dialog */}
+      <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) { setImportPreview(null); setImportError(''); setImportFileName('') } }}>
+        <DialogContent className="glass-card border-white/10 max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-2xl flex items-center gap-2">
+              <Sparkles className="w-6 h-6 text-emerald-400" /> AI Statement Import
+            </DialogTitle>
+            <p className="text-sm text-slate-400 mt-1">Drop a bank statement (.csv or .pdf) and GPT-4o will extract & categorize every transaction automatically.</p>
+          </DialogHeader>
+
+          {!importPreview && !importing && (
+            <div className="mt-4">
+              <label htmlFor="import-file" className="block cursor-pointer">
+                <div className="rounded-2xl border-2 border-dashed border-white/10 hover:border-emerald-400/50 hover:bg-emerald-400/5 transition p-10 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center mx-auto">
+                    <Upload className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <div className="mt-4 font-semibold text-lg">Drop your file here or click to browse</div>
+                  <div className="mt-1 text-sm text-slate-400">Supports .csv and .pdf up to 10 MB</div>
+                </div>
+                <input id="import-file" type="file" accept=".csv,text/csv,application/pdf,.pdf" className="hidden" onChange={e => handleImportFile(e.target.files?.[0])} />
+              </label>
+              {importError && <div className="mt-4 rounded-xl bg-rose-500/10 border border-rose-500/30 p-4 text-sm text-rose-300"><X className="w-4 h-4 inline mr-1" />{importError}</div>}
+            </div>
+          )}
+
+          {importing && (
+            <div className="mt-4 rounded-2xl border border-white/5 p-12 text-center">
+              <Loader2 className="w-10 h-10 text-emerald-400 animate-spin mx-auto" />
+              <div className="mt-4 font-semibold text-lg">Analyzing your statement…</div>
+              <div className="mt-1 text-sm text-slate-400">Extracting text and asking GPT-4o to categorize {importFileName}</div>
+            </div>
+          )}
+
+          {importPreview && (
+            <>
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <FileText className="w-4 h-4 text-emerald-400" />
+                  <span className="font-semibold">{importFileName}</span>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-emerald-400">{importPreview.filter(t => t._keep).length} of {importPreview.length} selected</span>
+                </div>
+                <button onClick={() => { setImportPreview(null); setImportError('') }} className="text-slate-400 hover:text-white text-xs">Upload another file</button>
+              </div>
+              <div className="mt-3 flex-1 overflow-auto rounded-xl border border-white/5">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                    <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
+                      <th className="p-3 w-10"></th>
+                      <th className="p-3">Date</th>
+                      <th className="p-3">Description</th>
+                      <th className="p-3">Category</th>
+                      <th className="p-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {importPreview.map(tx => {
+                      const meta = catMeta(tx.category)
+                      return (
+                        <tr key={tx.id} className={`${tx._keep ? '' : 'opacity-40'}`}>
+                          <td className="p-3">
+                            <input type="checkbox" checked={tx._keep} onChange={e => updatePreviewRow(tx.id, { _keep: e.target.checked })} className="w-4 h-4 accent-emerald-500" />
+                          </td>
+                          <td className="p-3 text-slate-400 number-font whitespace-nowrap">{tx.date}</td>
+                          <td className="p-3">
+                            <input value={tx.note} onChange={e => updatePreviewRow(tx.id, { note: e.target.value })} className="bg-transparent focus:bg-slate-900/70 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 w-full" />
+                          </td>
+                          <td className="p-3">
+                            <Select value={tx.category} onValueChange={(v) => updatePreviewRow(tx.id, { category: v })}>
+                              <SelectTrigger className="h-8 bg-slate-900/70 border-white/10 text-xs w-40">
+                                <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: meta.color }} />{tx.category}</div>
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CATEGORIES.map(c => (
+                                  <SelectItem key={c.key} value={c.key}>
+                                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{c.key}</div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className={`p-3 text-right font-bold number-font whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {tx.type === 'income' ? '+' : '−'} {formatCurrency(tx.amount)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <DialogFooter className="mt-4">
+                <Button variant="ghost" onClick={() => setImportOpen(false)} className="text-slate-400">Cancel</Button>
+                <Button onClick={confirmImport} disabled={!importPreview.some(t => t._keep)} className="bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 text-slate-900 font-bold">
+                  <Check className="w-4 h-4 mr-1" strokeWidth={3} />
+                  Import {importPreview.filter(t => t._keep).length} transaction{importPreview.filter(t => t._keep).length !== 1 ? 's' : ''}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
