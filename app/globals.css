@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 5%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 158 76% 55%;
+    --primary-foreground: 222 47% 5%;
+    --secondary: 217 32% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 32% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 32% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 32% 17%;
+    --input: 217 32% 17%;
+    --ring: 158 76% 55%;
+    --radius: 1rem;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-height: 100vh;
+  background: #05070d;
+  color: hsl(var(--foreground));
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Ambient gradient background matching the screenshot */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(1000px 700px at 15% -10%, rgba(220, 38, 90, 0.35), transparent 60%),
+    radial-gradient(900px 700px at 85% 0%, rgba(30, 41, 100, 0.55), transparent 60%),
+    radial-gradient(900px 800px at 95% 55%, rgba(20, 184, 166, 0.30), transparent 60%),
+    radial-gradient(800px 700px at 5% 75%, rgba(180, 60, 60, 0.28), transparent 60%),
+    linear-gradient(180deg, #08080f 0%, #06060c 100%);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.glass-card {
+  background: rgba(11, 15, 25, 0.85);
+  border: 1px solid rgba(255,255,255,0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.mint-glow {
+  box-shadow: 0 8px 32px -8px rgba(52, 211, 153, 0.35);
+}
+
+.donut-glow {
+  filter: drop-shadow(0 0 40px rgba(244, 63, 94, 0.35)) drop-shadow(0 0 60px rgba(52, 211, 153, 0.25));
+}
+
+/* nicer scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+.number-font { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
