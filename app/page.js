@@ -37,6 +37,28 @@ const CATEGORIES = [
 
 const catMeta = (name) => CATEGORIES.find(c => c.key === name) || CATEGORIES[CATEGORIES.length - 1]
 
+// Normalize a note for fuzzy comparison
+const normalizeNote = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+// Returns the existing tx that "matches" (looks like a duplicate) or null
+const findDuplicate = (tx, existing) => {
+  const txDate = new Date(tx.date).toISOString().slice(0, 10)
+  const txAmount = Math.round(Number(tx.amount) * 100)
+  const txNoteN = normalizeNote(tx.note)
+  return existing.find(e => {
+    const eDate = new Date(e.date).toISOString().slice(0, 10)
+    const eAmount = Math.round(Number(e.amount) * 100)
+    if (eDate !== txDate) return false
+    if (eAmount !== txAmount) return false
+    if (e.type !== tx.type) return false
+    const eNoteN = normalizeNote(e.note)
+    // If either note is empty, date+amount+type alone is enough
+    if (!txNoteN || !eNoteN) return true
+    // Otherwise require some overlap
+    return eNoteN.includes(txNoteN) || txNoteN.includes(eNoteN) || eNoteN.slice(0, 4) === txNoteN.slice(0, 4)
+  }) || null
+}
+
 const seedTransactions = () => {
   const today = new Date()
   const d = (offset) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset).toISOString()
@@ -161,8 +183,20 @@ function App() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
       if (!data.transactions?.length) throw new Error('No transactions found in the file')
-      // Attach ids + editable flag
-      setImportPreview(data.transactions.map(t => ({ ...t, id: crypto.randomUUID(), _keep: true })))
+      // Attach ids, run duplicate detection against existing transactions
+      const enriched = data.transactions.map(t => {
+        const dup = findDuplicate(t, transactions)
+        return {
+          ...t,
+          id: crypto.randomUUID(),
+          _keep: !dup,           // auto-uncheck duplicates
+          _duplicate: dup ? {
+            date: new Date(dup.date).toISOString().slice(0, 10),
+            note: dup.note,
+          } : null,
+        }
+      })
+      setImportPreview(enriched)
     } catch (e) {
       setImportError(e.message)
     } finally {
@@ -338,6 +372,23 @@ function App() {
                 </div>
                 <button onClick={() => { setImportPreview(null); setImportError('') }} className="text-slate-400 hover:text-white text-xs">Upload another file</button>
               </div>
+
+              {(() => {
+                const dupCount = importPreview.filter(t => t._duplicate).length
+                if (dupCount === 0) return null
+                return (
+                  <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-4 h-4 text-amber-300" />
+                    </div>
+                    <div className="text-amber-100">
+                      <span className="font-semibold">{dupCount} duplicate{dupCount !== 1 ? 's' : ''} detected</span>
+                      <span className="text-amber-200/70"> — already in your ledger and auto-skipped. Re-check the box to import anyway.</span>
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="mt-3 flex-1 overflow-auto rounded-xl border border-white/5">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
@@ -353,13 +404,20 @@ function App() {
                     {importPreview.map(tx => {
                       const meta = catMeta(tx.category)
                       return (
-                        <tr key={tx.id} className={`${tx._keep ? '' : 'opacity-40'}`}>
+                        <tr key={tx.id} className={`${tx._keep ? '' : 'opacity-40'} ${tx._duplicate ? 'bg-amber-500/5' : ''}`}>
                           <td className="p-3">
                             <input type="checkbox" checked={tx._keep} onChange={e => updatePreviewRow(tx.id, { _keep: e.target.checked })} className="w-4 h-4 accent-emerald-500" />
                           </td>
                           <td className="p-3 text-slate-400 number-font whitespace-nowrap">{tx.date}</td>
                           <td className="p-3">
-                            <input value={tx.note} onChange={e => updatePreviewRow(tx.id, { note: e.target.value })} className="bg-transparent focus:bg-slate-900/70 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 w-full" />
+                            <div className="flex items-center gap-2">
+                              <input value={tx.note} onChange={e => updatePreviewRow(tx.id, { note: e.target.value })} className="bg-transparent focus:bg-slate-900/70 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 flex-1 min-w-0" />
+                              {tx._duplicate && (
+                                <span title={`Matches existing "${tx._duplicate.note}" on ${tx._duplicate.date}`} className="flex-shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border border-amber-500/30">
+                                  Duplicate
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3">
                             <Select value={tx.category} onValueChange={(v) => updatePreviewRow(tx.id, { category: v })}>
