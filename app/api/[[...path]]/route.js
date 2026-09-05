@@ -280,6 +280,72 @@ async function handleRoute(request, { params }) {
       return cors(NextResponse.json(result))
     }
 
+    if (route === '/coach' && method === 'POST') {
+      const body = await request.json()
+      const txs = Array.isArray(body?.transactions) ? body.transactions : []
+      const history = Array.isArray(body?.history) ? body.history : []
+      const message = String(body?.message || '').trim()
+      if (!message) {
+        return cors(NextResponse.json({ error: 'message is required' }, { status: 400 }))
+      }
+
+      const stats = buildStats(txs)
+      const system = `You are the user's warm, practical AI Finance Coach.
+Answer their question with concrete numbers from the data below.
+Rules:
+- Keep answers short (2-4 sentences), plain-English, non-judgemental.
+- Reference actual dollar amounts and percentages from the stats.
+- If the user asks about specific merchants or categories, quote the numbers.
+- If they ask something the data can't answer, say so gently and suggest what to track next.
+- Never invent figures.
+
+USER'S CURRENT DATA:
+${JSON.stringify(stats, null, 2)}`
+
+      const openai = getOpenAI()
+      const stream = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        stream: true,
+        temperature: 0.6,
+        messages: [
+          { role: 'system', content: system },
+          ...history.slice(-10).map(m => ({ role: m.role, content: m.content })),
+          { role: 'user', content: message },
+        ],
+      })
+
+      const encoder = new TextEncoder()
+      const readable = new ReadableStream({
+        async start(controller) {
+          let full = ''
+          try {
+            for await (const chunk of stream) {
+              const token = chunk?.choices?.[0]?.delta?.content || ''
+              if (token) {
+                full += token
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`))
+              }
+            }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, full })}\n\n`))
+          } catch (err) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err?.message || 'stream failed' })}\n\n`))
+          } finally {
+            controller.close()
+          }
+        },
+      })
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+          'Access-Control-Allow-Origin': process.env.CORS_ORIGINS || '*',
+        },
+      })
+    }
+
     return cors(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))
   } catch (error) {
     console.error('API Error:', error?.message, error?.stack)

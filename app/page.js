@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Wallet, Plus, LayoutGrid, Receipt, TrendingUp, Settings as SettingsIcon,
   ArrowUpRight, ArrowDownRight, Trash2, Search, Utensils, Bolt, Car, Film,
   ShoppingBag, HeartPulse, Home, Coffee, Briefcase, Gift, MoreHorizontal,
-  Upload, Sparkles, FileText, Check, X, Loader2
+  Upload, Sparkles, FileText, Check, X, Loader2,
+  MessageCircle, Send, Bot, User as UserIcon, RotateCcw
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -518,6 +519,9 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
       {/* Smart Insights */}
       <InsightsSection insights={insights} loading={insightsLoading} error={insightsError} onRefresh={() => loadInsights(true)} hasData={transactions.length > 0} />
 
+      {/* AI Coach - streaming chat with memory */}
+      <CoachPanel transactions={transactions} />
+
       {/* Middle row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Donut */}
@@ -604,6 +608,190 @@ function Dashboard({ totals, byCategory, donutTotal, transactions }) {
           {recent.length === 0 && <div className="text-slate-400 py-6 text-sm">Nothing yet.</div>}
         </div>
       </div>
+    </div>
+  )
+}
+
+function CoachPanel({ transactions }) {
+  const SUGGESTIONS = [
+    'Why did dining spike?',
+    'How can I save more?',
+    'What is my biggest expense category?',
+    'Am I on track this month?',
+  ]
+
+  const [sessionId] = useState(() => {
+    if (typeof window === 'undefined') return ''
+    const existing = localStorage.getItem('ft.coach.session')
+    if (existing) return existing
+    const id = crypto.randomUUID()
+    localStorage.setItem('ft.coach.session', id)
+    return id
+  })
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [error, setError] = useState('')
+  const listRef = useRef(null)
+  const abortRef = useRef(null)
+
+  // Load history once
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('ft.coach.messages')
+      if (raw) setMessages(JSON.parse(raw))
+    } catch {}
+  }, [])
+
+  // Persist + autoscroll on every message change
+  useEffect(() => {
+    try { localStorage.setItem('ft.coach.messages', JSON.stringify(messages)) } catch {}
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
+  }, [messages])
+
+  const send = async (raw) => {
+    const text = (raw ?? input).trim()
+    if (!text || streaming) return
+    setInput('')
+    setError('')
+    setStreaming(true)
+
+    const nextHistory = [...messages, { role: 'user', content: text }, { role: 'assistant', content: '' }]
+    setMessages(nextHistory)
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const res = await fetch('/api/coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: text,
+          transactions,
+          history: messages,
+        }),
+      })
+      if (!res.ok || !res.body) throw new Error(`Coach API returned ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() || ''
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue
+          let payload
+          try { payload = JSON.parse(part.slice(6)) } catch { continue }
+          if (payload.error) { setError(payload.error); continue }
+          if (payload.token) {
+            setMessages(prev => {
+              const clone = [...prev]
+              const last = clone[clone.length - 1]
+              clone[clone.length - 1] = { ...last, content: (last.content || '') + payload.token }
+              return clone
+            })
+          }
+          if (payload.done) {
+            // final token already appended via last chunk
+          }
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') setError(e.message)
+    } finally {
+      setStreaming(false)
+      abortRef.current = null
+    }
+  }
+
+  const clearChat = () => {
+    setMessages([])
+    try { localStorage.removeItem('ft.coach.messages') } catch {}
+  }
+
+  return (
+    <div className="glass-card rounded-3xl p-6 md:p-7">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center mint-glow">
+              <MessageCircle className="w-5 h-5 text-slate-900" strokeWidth={2.5} />
+            </div>
+            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-950 animate-pulse" />
+          </div>
+          <div>
+            <h2 className="text-xl md:text-2xl font-black leading-tight">AI Coach</h2>
+            <p className="text-xs text-slate-400">Ask anything about your money — streamed answers, remembers context</p>
+          </div>
+        </div>
+        {messages.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearChat} className="text-slate-400 hover:text-white hover:bg-white/5">
+            <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Clear
+          </Button>
+        )}
+      </div>
+
+      <div ref={listRef} className="mt-4 h-72 md:h-80 overflow-y-auto rounded-2xl bg-slate-950/50 border border-white/5 p-4 space-y-3">
+        {messages.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center">
+            <Bot className="w-10 h-10 text-emerald-400/60" />
+            <div className="mt-3 text-sm text-slate-400">Ask a follow-up about your spending. Try one of these:</div>
+            <div className="mt-4 flex flex-wrap gap-2 justify-center max-w-md">
+              {SUGGESTIONS.map(s => (
+                <button key={s} onClick={() => send(s)} className="text-xs font-semibold rounded-full px-3 py-1.5 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 transition">
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          messages.map((m, i) => (
+            <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+              className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {m.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-4 h-4 text-slate-900" strokeWidth={2.5} />
+                </div>
+              )}
+              <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed max-w-[80%] ${m.role === 'user'
+                ? 'bg-gradient-to-br from-emerald-500/90 to-teal-500/90 text-slate-900 font-semibold'
+                : 'bg-slate-800/80 text-slate-100'}`}>
+                {m.content || (streaming && i === messages.length - 1 ? <span className="inline-block w-1.5 h-4 bg-emerald-400 animate-pulse align-middle rounded-sm" /> : null)}
+                {streaming && i === messages.length - 1 && m.content && (
+                  <span className="inline-block w-1.5 h-4 bg-emerald-400 animate-pulse align-middle ml-0.5 rounded-sm" />
+                )}
+              </div>
+              {m.role === 'user' && (
+                <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0">
+                  <UserIcon className="w-4 h-4 text-slate-200" />
+                </div>
+              )}
+            </motion.div>
+          ))
+        )}
+      </div>
+
+      {error && <div className="mt-3 text-xs text-rose-300">{error}</div>}
+
+      <form onSubmit={(e) => { e.preventDefault(); send() }} className="mt-3 flex gap-2">
+        <Input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={streaming}
+          placeholder={streaming ? 'Coach is typing…' : 'Ask a follow-up question…'}
+          className="bg-slate-900/70 border-white/10 h-11 flex-1"
+        />
+        <Button type="submit" disabled={streaming || !input.trim()} className="h-11 px-4 bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 text-slate-900 font-bold">
+          {streaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+        </Button>
+      </form>
     </div>
   )
 }
