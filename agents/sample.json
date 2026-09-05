@@ -1,0 +1,23 @@
+[
+  { "id": "tx-001", "date": "2026-09-01", "type": "income",  "category": "Salary",         "amount": 3200.00, "note": "ACME Payroll" },
+  { "id": "tx-002", "date": "2026-09-02", "type": "expense", "category": "Housing",        "amount": 1150.00, "note": "Rent" },
+  { "id": "tx-003", "date": "2026-09-02", "type": "expense", "category": "Utilities",      "amount": 92.40,   "note": "Electric bill" },
+  { "id": "tx-004", "date": "2026-09-03", "type": "expense", "category": "Food & Dining",  "amount": 128.75,  "note": "Whole Foods" },
+  { "id": "tx-005", "date": "2026-09-04", "type": "expense", "category": "Coffee",         "amount": 6.85,    "note": "Starbucks" },
+  { "id": "tx-006", "date": "2026-09-05", "type": "expense", "category": "Coffee",         "amount": 7.15,    "note": "Starbucks" },
+  { "id": "tx-007", "date": "2026-09-06", "type": "expense", "category": "Entertainment",  "amount": 15.99,   "note": "Netflix" },
+  { "id": "tx-008", "date": "2026-09-08", "type": "expense", "category": "Transportation", "amount": 42.10,   "note": "Shell Gas" },
+  { "id": "tx-009", "date": "2026-09-10", "type": "expense", "category": "Shopping",       "amount": 489.00,  "note": "Best Buy laptop" },
+  { "id": "tx-010", "date": "2026-09-11", "type": "expense", "category": "Healthcare",     "amount": 60.00,   "note": "Pharmacy" },
+  { "id": "tx-011", "date": "2026-09-12", "type": "expense", "category": "Coffee",         "amount": 5.60,    "note": "Blue Bottle" },
+  { "id": "tx-012", "date": "2026-09-14", "type": "expense", "category": "Food & Dining",  "amount": 34.50,   "note": "AMZN prime video" },
+
+  { "id": "tx-013", "date": "2026-08-01", "type": "income",  "category": "Salary",         "amount": 3200.00, "note": "ACME Payroll" },
+  { "id": "tx-014", "date": "2026-08-02", "type": "expense", "category": "Housing",        "amount": 1150.00, "note": "Rent" },
+  { "id": "tx-015", "date": "2026-08-04", "type": "expense", "category": "Food & Dining",  "amount": 78.00,   "note": "Trader Joe's" },
+  { "id": "tx-016", "date": "2026-08-05", "type": "expense", "category": "Utilities",      "amount": 88.10,   "note": "Electric bill" },
+  { "id": "tx-017", "date": "2026-08-07", "type": "expense", "category": "Coffee",         "amount": 6.25,    "note": "Starbucks" },
+  { "id": "tx-018", "date": "2026-08-12", "type": "expense", "category": "Entertainment",  "amount": 15.99,   "note": "Netflix" },
+  { "id": "tx-019", "date": "2026-08-15", "type": "expense", "category": "Transportation", "amount": 38.90,   "note": "Shell Gas" },
+  { "id": "tx-020", "date": "2026-08-20", "type": "expense", "category": "Shopping",       "amount": 65.00,   "note": "Amazon" }
+]
