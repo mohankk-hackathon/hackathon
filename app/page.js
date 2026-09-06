@@ -6,8 +6,11 @@ import {
   ArrowUpRight, ArrowDownRight, Trash2, Search, Utensils, Bolt, Car, Film,
   ShoppingBag, HeartPulse, Home, Coffee, Briefcase, Gift, MoreHorizontal,
   Upload, Sparkles, FileText, Check, X, Loader2,
-  MessageCircle, Send, Bot, User as UserIcon, RotateCcw
+  MessageCircle, Send, Bot, User as UserIcon, RotateCcw,
+  BrainCircuit
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -82,6 +85,8 @@ function App() {
   const [importError, setImportError] = useState('')
   const [importPreview, setImportPreview] = useState(null) // array of tx from LLM
   const [importFileName, setImportFileName] = useState('')
+  // Lyzr Financial Coach Agent state
+  const [lyzrOpen, setLyzrOpen] = useState(false)
 
   // load / save
   useEffect(() => {
@@ -246,9 +251,14 @@ function App() {
             </div>
           </div>
         </div>
-        <Button onClick={() => setImportOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
-          <Sparkles className="w-5 h-5 mr-1.5" strokeWidth={2.5} /> Import CSV / PDF
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={() => setLyzrOpen(true)} variant="outline" className="h-12 px-4 rounded-2xl border-violet-400/40 bg-violet-500/10 hover:bg-violet-500/20 text-violet-100 font-bold text-sm">
+            <BrainCircuit className="w-4 h-4 mr-1.5 text-violet-300" /> Financial Coach Agent
+          </Button>
+          <Button onClick={() => setImportOpen(true)} className="h-12 px-5 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-900 font-bold text-base mint-glow">
+            <Sparkles className="w-5 h-5 mr-1.5" strokeWidth={2.5} /> Import CSV / PDF
+          </Button>
+        </div>
       </header>
 
       {/* Tabs */}
@@ -407,7 +417,150 @@ function App() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Lyzr Financial Coach Agent dialog */}
+      <LyzrCoachDialog open={lyzrOpen} onOpenChange={setLyzrOpen} />
     </div>
+  )
+}
+
+function LyzrCoachDialog({ open, onOpenChange }) {
+  const SUGGESTIONS = [
+    'How much emergency fund should I have?',
+    'How can I get out of debt faster?',
+    'What is a good savings rate?',
+    'Should I invest or pay off debt first?',
+  ]
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const listRef = useRef(null)
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
+  }, [messages, loading])
+
+  const send = async (raw) => {
+    const text = (raw ?? input).trim()
+    if (!text || loading) return
+    setInput('')
+    setError('')
+    setLoading(true)
+    setMessages(prev => [...prev, { role: 'user', content: text }])
+    try {
+      const res = await fetch('/api/lyzr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setMessages(prev => [...prev, { role: 'assistant', content: data.response || '(empty response)' }])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const reset = () => { setMessages([]); setError('') }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setError('') } }}>
+      <DialogContent className="glass-card border-violet-400/30 max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-400 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-violet-500/30">
+                <BrainCircuit className="w-6 h-6 text-slate-900" strokeWidth={2.5} />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">Financial Coach Agent</DialogTitle>
+                <p className="text-xs text-slate-400 mt-0.5">Powered by <span className="text-violet-300 font-semibold">Lyzr AI</span> — personalised money coaching</p>
+              </div>
+            </div>
+            {messages.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={reset} className="text-slate-400 hover:text-white hover:bg-white/5 shrink-0">
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reset
+              </Button>
+            )}
+          </div>
+        </DialogHeader>
+
+        <div ref={listRef} className="mt-2 flex-1 overflow-y-auto rounded-2xl bg-slate-950/50 border border-white/5 p-4 space-y-3 min-h-[300px]">
+          {messages.length === 0 && !loading ? (
+            <div className="h-full flex flex-col items-center justify-center text-center py-6">
+              <BrainCircuit className="w-12 h-12 text-violet-400/60" />
+              <div className="mt-3 text-sm text-slate-400">Ask the coach anything about your money.</div>
+              <div className="mt-4 flex flex-wrap gap-2 justify-center max-w-md">
+                {SUGGESTIONS.map(s => (
+                  <button key={s} onClick={() => send(s)} className="text-xs font-semibold rounded-full px-3 py-1.5 border border-violet-400/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20 transition">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map((m, i) => (
+                <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+                  className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {m.role === 'assistant' && (
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
+                      <BrainCircuit className="w-4 h-4 text-slate-900" strokeWidth={2.5} />
+                    </div>
+                  )}
+                  <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed max-w-[85%] ${m.role === 'user'
+                    ? 'bg-gradient-to-br from-violet-500/90 to-fuchsia-500/90 text-slate-900 font-semibold'
+                    : 'bg-slate-800/80 text-slate-100'}`}>
+                    {m.role === 'assistant' ? (
+                      <div className="prose prose-sm prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-strong:text-violet-200 prose-headings:text-violet-100">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <span>{m.content}</span>
+                    )}
+                  </div>
+                  {m.role === 'user' && (
+                    <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0">
+                      <UserIcon className="w-4 h-4 text-slate-200" />
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+              {loading && (
+                <div className="flex gap-2 justify-start">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
+                    <BrainCircuit className="w-4 h-4 text-slate-900" strokeWidth={2.5} />
+                  </div>
+                  <div className="rounded-2xl px-4 py-3 bg-slate-800/80 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-300 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-300 animate-bounce" style={{ animationDelay: '120ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-300 animate-bounce" style={{ animationDelay: '240ms' }} />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {error && <div className="mt-2 text-xs text-rose-300">{error}</div>}
+
+        <form onSubmit={(e) => { e.preventDefault(); send() }} className="mt-3 flex gap-2">
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={loading}
+            placeholder={loading ? 'Coach is thinking…' : 'Ask the Financial Coach Agent…'}
+            className="bg-slate-900/70 border-white/10 h-11 flex-1"
+          />
+          <Button type="submit" disabled={loading || !input.trim()} className="h-11 px-4 bg-gradient-to-br from-violet-400 to-fuchsia-500 hover:from-violet-300 text-slate-900 font-bold">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

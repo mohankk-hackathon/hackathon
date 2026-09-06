@@ -238,6 +238,42 @@ async function handleRoute(request, { params }) {
   const method = request.method
 
   try {
+    if (route === '/lyzr' && method === 'POST') {
+      const body = await request.json()
+      const message = String(body?.message || '').trim()
+      if (!message) {
+        return cors(NextResponse.json({ error: 'message is required' }, { status: 400 }))
+      }
+
+      const upstream = await fetch(process.env.LYZR_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.LYZR_API_KEY,
+        },
+        body: JSON.stringify({
+          user_id: process.env.LYZR_USER_ID,
+          agent_id: process.env.LYZR_AGENT_ID,
+          session_id: process.env.LYZR_SESSION_ID,
+          message,
+        }),
+      })
+
+      if (!upstream.ok) {
+        const errText = await upstream.text().catch(() => '')
+        return cors(NextResponse.json(
+          { error: `Lyzr upstream ${upstream.status}: ${errText.slice(0, 500)}` },
+          { status: 502 }
+        ))
+      }
+
+      const data = await upstream.json()
+      return cors(NextResponse.json({
+        response: data?.response || '',
+        raw: data,
+      }))
+    }
+
     if ((route === '/' || route === '/root') && method === 'GET') {
       return cors(NextResponse.json({ message: 'Finance Tracker API' }))
     }
