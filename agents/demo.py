@@ -32,7 +32,7 @@ def pretty(name: str, result: dict) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Finance Tracker LangGraph multi-agent demo")
+    parser = argparse.ArgumentParser(description="CoachMoney LangGraph multi-agent demo")
     parser.add_argument("--tab", choices=[*tabs(), "all"], help="Which tab to invoke")
     parser.add_argument("--file", default=str(Path(__file__).with_name("sample.json")))
     parser.add_argument("--graph", action="store_true", help="Print the compiled graph")

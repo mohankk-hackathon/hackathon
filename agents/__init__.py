@@ -1,4 +1,4 @@
-"""Finance Tracker multi-agent package.
+"""CoachMoney multi-agent package.
 
 Each tab in the Next.js UI is served by a specialised agent:
   - Dashboard    -> DashboardAgent

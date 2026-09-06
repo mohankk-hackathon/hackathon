@@ -308,7 +308,7 @@ async function handleRoute(request, { params }) {
     }
 
     if ((route === '/' || route === '/root') && method === 'GET') {
-      return cors(NextResponse.json({ message: 'Finance Tracker API' }))
+      return cors(NextResponse.json({ message: 'CoachMoney API' }))
     }
 
     if (route === '/import' && method === 'POST') {

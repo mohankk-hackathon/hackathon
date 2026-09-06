@@ -243,7 +243,7 @@ function App() {
             <Wallet className="w-7 h-7 text-slate-900" strokeWidth={2.5} />
           </div>
           <div>
-            <h1 className="text-4xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-emerald-200 via-emerald-100 to-teal-200 bg-clip-text text-transparent">Finance Tracker</h1>
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-emerald-200 via-emerald-100 to-teal-200 bg-clip-text text-transparent">CoachMoney</h1>
             <div className="mt-1 flex items-center gap-3 text-xs md:text-sm font-semibold text-slate-400">
               <span className="tracking-widest">{dateStr}</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />

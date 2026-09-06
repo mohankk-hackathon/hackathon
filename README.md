@@ -1,8 +1,8 @@
-# Finance Tracker
+# CoachMoney
 
 A beautiful dark-themed personal finance dashboard built with Next.js 15, Tailwind CSS, shadcn/ui, and Recharts.
 
-![Finance Tracker](https://img.shields.io/badge/Next.js-15-black) ![Tailwind](https://img.shields.io/badge/Tailwind-3-06B6D4) ![License](https://img.shields.io/badge/license-MIT-green)
+![CoachMoney](https://img.shields.io/badge/Next.js-15-black) ![Tailwind](https://img.shields.io/badge/Tailwind-3-06B6D4) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
@@ -48,7 +48,7 @@ The app will be live at `https://<your-project>.vercel.app` in under a minute.
 ```
 app/
 ├── layout.js        # Root layout + fonts
-├── page.js          # Full Finance Tracker UI
+├── page.js          # Full CoachMoney UI
 └── globals.css      # Ambient gradient background & tokens
 components/ui/      # shadcn primitives (Button, Dialog, Select…)
 ```

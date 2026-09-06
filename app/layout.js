@@ -4,8 +4,8 @@ import { Inter } from 'next/font/google'
 const inter = Inter({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800', '900'] })
 
 export const metadata = {
-  title: 'Finance Tracker',
-  description: 'Track your income, expenses and budget beautifully',
+  title: 'CoachMoney',
+  description: 'Your AI-powered money coach — track spending, get insights, chat with a finance agent',
 }
 
 export default function RootLayout({ children }) {

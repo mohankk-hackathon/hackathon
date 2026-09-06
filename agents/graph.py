@@ -1,4 +1,4 @@
-"""LangGraph orchestration for the Finance Tracker multi-agent system.
+"""LangGraph orchestration for the CoachMoney multi-agent system.
 
 Two graph paths compiled into one app:
 

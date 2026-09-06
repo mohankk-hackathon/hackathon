@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from agents.graph import run_tab, tabs, render_diagram
 
-app = FastAPI(title="Finance Tracker - LangGraph Multi-Agent API", version="2.0.0")
+app = FastAPI(title="CoachMoney - LangGraph Multi-Agent API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

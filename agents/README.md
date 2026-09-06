@@ -1,4 +1,4 @@
-# Finance Tracker — LangGraph Multi-Agent System
+# CoachMoney — LangGraph Multi-Agent System
 
 Four specialised GPT-4o-mini agents wired as nodes in a LangGraph `StateGraph`,
 one per tab of the Next.js UI:
