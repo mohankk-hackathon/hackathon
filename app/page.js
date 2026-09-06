@@ -7,7 +7,7 @@ import {
   ShoppingBag, HeartPulse, Home, Coffee, Briefcase, Gift, MoreHorizontal,
   Upload, Sparkles, FileText, Check, X, Loader2,
   MessageCircle, Send, Bot, User as UserIcon, RotateCcw,
-  BrainCircuit
+  BrainCircuit, Paperclip
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -435,28 +435,54 @@ function LyzrCoachDialog({ open, onOpenChange }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [attachment, setAttachment] = useState(null) // File | null
   const listRef = useRef(null)
+  const fileRef = useRef(null)
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
   }, [messages, loading])
 
+  const pickFile = () => fileRef.current?.click()
+  const onFileChosen = (e) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    // 10 MB soft cap so uploads don't hang the browser
+    if (f.size > 10 * 1024 * 1024) { setError('File too large — max 10 MB.'); return }
+    setAttachment(f)
+    setError('')
+    e.target.value = ''
+  }
+
   const send = async (raw) => {
     const text = (raw ?? input).trim()
-    if (!text || loading) return
+    if ((!text && !attachment) || loading) return
     setInput('')
     setError('')
     setLoading(true)
-    setMessages(prev => [...prev, { role: 'user', content: text }])
+    const displayed = attachment
+      ? (text ? `${text}\n\n📎 ${attachment.name}` : `📎 ${attachment.name}`)
+      : text
+    setMessages(prev => [...prev, { role: 'user', content: displayed }])
+
     try {
-      const res = await fetch('/api/lyzr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-      })
+      let res
+      if (attachment) {
+        const fd = new FormData()
+        fd.append('message', text || `Please analyse this file: ${attachment.name}`)
+        fd.append('file', attachment)
+        res = await fetch('/api/lyzr', { method: 'POST', body: fd })
+      } else {
+        res = await fetch('/api/lyzr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
+        })
+      }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       setMessages(prev => [...prev, { role: 'assistant', content: data.response || '(empty response)' }])
+      setAttachment(null)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -464,7 +490,7 @@ function LyzrCoachDialog({ open, onOpenChange }) {
     }
   }
 
-  const reset = () => { setMessages([]); setError('') }
+  const reset = () => { setMessages([]); setError(''); setAttachment(null) }
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setError('') } }}>
@@ -547,15 +573,40 @@ function LyzrCoachDialog({ open, onOpenChange }) {
 
         {error && <div className="mt-2 text-xs text-rose-300">{error}</div>}
 
+        {/* Attachment chip */}
+        {attachment && (
+          <div className="mt-2 flex items-center gap-2 rounded-xl bg-violet-500/10 border border-violet-400/30 px-3 py-2 text-sm">
+            <FileText className="w-4 h-4 text-violet-300 flex-shrink-0" />
+            <div className="flex-1 min-w-0 truncate">
+              <span className="text-violet-100 font-semibold">{attachment.name}</span>
+              <span className="text-violet-300/70 ml-2">{(attachment.size / 1024).toFixed(1)} KB</span>
+            </div>
+            <button onClick={() => setAttachment(null)} disabled={loading} className="text-violet-300 hover:text-white flex-shrink-0" title="Remove">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         <form onSubmit={(e) => { e.preventDefault(); send() }} className="mt-3 flex gap-2">
+          <input ref={fileRef} type="file" accept=".csv,text/csv,application/pdf,.pdf" className="hidden" onChange={onFileChosen} />
+          <Button
+            type="button"
+            onClick={pickFile}
+            disabled={loading}
+            variant="outline"
+            className="h-11 px-3 rounded-md border-violet-400/30 bg-slate-900/70 hover:bg-violet-500/10 text-violet-200"
+            title="Attach CSV or PDF"
+          >
+            <Paperclip className="w-4 h-4" />
+          </Button>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={loading}
-            placeholder={loading ? 'Coach is thinking…' : 'Ask the Financial Coach Agent…'}
+            placeholder={loading ? 'Coach is thinking…' : attachment ? 'Ask a question about this file…' : 'Ask the Financial Coach Agent…'}
             className="bg-slate-900/70 border-white/10 h-11 flex-1"
           />
-          <Button type="submit" disabled={loading || !input.trim()} className="h-11 px-4 bg-gradient-to-br from-violet-400 to-fuchsia-500 hover:from-violet-300 text-slate-900 font-bold">
+          <Button type="submit" disabled={loading || (!input.trim() && !attachment)} className="h-11 px-4 bg-gradient-to-br from-violet-400 to-fuchsia-500 hover:from-violet-300 text-slate-900 font-bold">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </Button>
         </form>

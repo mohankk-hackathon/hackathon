@@ -239,10 +239,42 @@ async function handleRoute(request, { params }) {
 
   try {
     if (route === '/lyzr' && method === 'POST') {
-      const body = await request.json()
-      const message = String(body?.message || '').trim()
-      if (!message) {
-        return cors(NextResponse.json({ error: 'message is required' }, { status: 400 }))
+      const contentType = request.headers.get('content-type') || ''
+      let message = ''
+      let attachedText = ''
+      let attachedName = ''
+
+      if (contentType.includes('multipart/form-data')) {
+        const form = await request.formData()
+        message = String(form.get('message') || '').trim()
+        const file = form.get('file')
+        if (file && typeof file !== 'string') {
+          try {
+            attachedText = await extractText(file)
+            attachedName = file.name || 'attachment'
+          } catch (err) {
+            return cors(NextResponse.json({ error: `Could not read file: ${err?.message || 'unknown error'}` }, { status: 422 }))
+          }
+        }
+      } else {
+        const body = await request.json()
+        message = String(body?.message || '').trim()
+      }
+
+      if (!message && !attachedText) {
+        return cors(NextResponse.json({ error: 'message or file is required' }, { status: 400 }))
+      }
+
+      // Compose the payload the Lyzr agent will receive
+      let composed = message
+      if (attachedText) {
+        // Cap the amount of text we forward so we don't blow past Lyzr's context
+        const trimmed = attachedText.length > 40000 ? attachedText.slice(0, 40000) + '\n\n[…truncated…]' : attachedText
+        composed = (
+          (message ? message + '\n\n' : '') +
+          `Attached file: ${attachedName}\n` +
+          '```\n' + trimmed + '\n```'
+        )
       }
 
       const upstream = await fetch(process.env.LYZR_URL, {
@@ -255,7 +287,7 @@ async function handleRoute(request, { params }) {
           user_id: process.env.LYZR_USER_ID,
           agent_id: process.env.LYZR_AGENT_ID,
           session_id: process.env.LYZR_SESSION_ID,
-          message,
+          message: composed,
         }),
       })
 
@@ -270,6 +302,7 @@ async function handleRoute(request, { params }) {
       const data = await upstream.json()
       return cors(NextResponse.json({
         response: data?.response || '',
+        attached: attachedName ? { name: attachedName, chars: attachedText.length } : null,
         raw: data,
       }))
     }
